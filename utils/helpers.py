@@ -7,7 +7,7 @@ def on_press(key):
     except AttributeError:
         if key == keyboard.Key.esc:  # Check if the 'Esc' key is pressed
             print("Exiting...")
-            return False  # Stop the listener
+            return False
         
 def main():
     print("Press 'x' to capture mouse location. Press 'Esc' to exit.")
