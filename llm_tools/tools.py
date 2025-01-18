@@ -1,4 +1,4 @@
-from assets.ressources import bles
+from assets.ressources import ressources
 
 def get_item_coordinates(item_name: str) -> dict:
     """
@@ -9,5 +9,7 @@ def get_item_coordinates(item_name: str) -> dict:
         dict: A dictionary containing the coordinates of the specified item and the associated quantity.
     """
 
+    # TODO:
+    # it's a temporary placeholder function yet
     if item_name == "ble":
-        return bles
+        return ressources['Blé']
