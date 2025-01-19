@@ -8,9 +8,11 @@ import time
 import interception
 import subprocess
 from typing import List, Tuple, Optional
-import subprocess
 from functools import wraps
 from collections import defaultdict
+from utils.pathfinding import a_star_map
+from assets.grid import dofus_map
+import ctypes
 
 # GLOBALS
 # I define window_name as a global because I don't want the llm to need to input it.
@@ -24,7 +26,7 @@ def focus_window(func):
         # Access the global window_name variable
         try:
             result = subprocess.run(
-                ["python", "tools/focus_window.py", window_name],
+                ["python", "utils/focus_window.py", window_name],
                 capture_output=True,
                 text=True,
             )
@@ -104,6 +106,22 @@ def get_position() -> tuple:
 # extracted_text = get_position()
 
 
+def is_fullscreen(window):
+    """
+    Check if the window is in fullscreen mode.
+    
+    Args:
+        window: pygetwindow Window object.
+    
+    Returns:
+        bool: True if fullscreen, False otherwise.
+    """
+    user32 = ctypes.windll.user32
+    screen_width = user32.GetSystemMetrics(0)
+    screen_height = user32.GetSystemMetrics(1)
+
+    return window.left == 0 and window.top == 0 and window.width == screen_width and window.height == screen_height
+
 @focus_window
 def get_screen_capture(window_name: str):
     """
@@ -122,10 +140,17 @@ def get_screen_capture(window_name: str):
         print("Window not found!")
         return None
 
-    left = window.left
-    top = window.top
-    right = left + window.width # full screen size
-    bottom = top + window.height # full screen size
+    if is_fullscreen(window):
+        # Fullscreen mode, no adjustments needed
+        left, top, right, bottom = window.left, window.top, window.left + window.width, window.top + window.height
+    
+    else: 
+        title_bar_height = 0 # Typical window border height on Windows #test
+        border_width = 8  # Typical window border width on Windows
+        left = window.left + border_width
+        top = window.top + title_bar_height
+        right = window.left + window.width - border_width
+        bottom = window.top + window.height - border_width
 
     # Capture a small box from the screen
     screen = np.array(ImageGrab.grab(bbox=(left, top, right, bottom)))
@@ -133,13 +158,13 @@ def get_screen_capture(window_name: str):
     # Convert from RGB to BGR for OpenCV
     screen_bgr = cv2.cvtColor(screen, cv2.COLOR_RGB2BGR)
 
-    # Display if needed
+    ## Display if needed
     # cv2.imshow("Captured Small Box", screen_bgr)
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
 
     return screen_bgr
-    
+
 
 def load_item_image(image_folder, item_name):
 
@@ -234,13 +259,13 @@ def find_item_coordinates(item_name:str) -> List[Tuple[int, int]]:
             # Optionally, you can draw rectangles on the screen to show detected wheat positions.
             cv2.rectangle(screen, (x1, y1), (x2, y2), (0, 255, 0), 2);
         
-    # cv2.imshow('Detected Wheat', screen)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    cv2.imshow('Detected Wheat', screen)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
     return final_coordinates
 
-
+# find_item_coordinates('ble')
 
 @focus_window
 def click_on_coordinates(list_of_coordinates: List[Tuple[int, int]]) -> str:
@@ -261,7 +286,6 @@ def click_on_coordinates(list_of_coordinates: List[Tuple[int, int]]) -> str:
     """
 
     list_of_coordinates = eval(list_of_coordinates)
-
 
     for (x, y) in list_of_coordinates:
         interception.click(x, y, button="left", delay=2)
@@ -336,86 +360,83 @@ def get_item_quantities_in_inventory(item_names: List[str]) -> dict:
               their corresponding quantities in the inventory.
     """
 
-    # Open inventory
-    interception.press('i')
+    def open_close_inventory():
+        interception.press('i')
+
+    def locate_on_screen(screen, name, debug=False):
+        template = load_item_image('assets/inventory', name)
+        template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        result = cv2.matchTemplate(screen, template_gray, cv2.TM_CCOEFF_NORMED)
+
+        location = np.where(result == np.max(result))
+
+        [y], [x] = location
+
+        x2 = x + template.shape[1]
+        y2 = y + template.shape[0]
+
+        if debug:
+            cv2.rectangle(screen, (x, y), (x2, y2), (0, 255, 0), 2)
+            cv2.imshow(f"{name}", screen)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        return x, y, x2, y2
+
+    open_close_inventory()
 
     screen = get_screen_capture('Iop')
     screen_gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
 
+    x_search_bar, y_search_bar, x2_search_bar, y2_search_bar = locate_on_screen(screen_gray, 'search_bar')
+
+    # Click on the lookup bar
+    interception.click(((x_search_bar + x2_search_bar) // 2, (y_search_bar + y2_search_bar) // 2)) 
+    
     item_quantities = defaultdict(int)
 
     for item_name in item_names:
 
         item_quantity = 0
 
-        template = load_item_image('assets/inventory', item_name)
-        template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-        result = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
+        # Type item name in the search bar
+        for letter in item_name:
+            interception.press(letter)
 
-        # cv2.imshow("Captured Small Box", result)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
+        # Take screenshot of the game (with inventory open and the name typed)
+        screen = get_screen_capture('Iop')
+        screen_gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
+        
+        x_item, y_item, x2_item, y2_item = locate_on_screen(screen_gray, item_name)
 
-        # Find locations where the result is above the threshold and in the clickable zone
-        threshold = 0.7
-        nms_threshold = 0.7
-        # locations = np.where(result >= threshold) ## Marche pas très bien entre le pain et le fer; 
+        region_with_text = screen[y_item:y_item + 20, x_item - 5 : x_item + 40]
 
-        max_val = np.max(result)
-        locations = np.where(result == max_val)
-        coordinates = list(zip(*locations[::-1]))
+        ## Remove color instead of gray might help for some items
+        lower_bound = np.array([150, 150, 150])
+        upper_bound = np.array([255, 255, 255])
+        region_with_text = cv2.inRange(region_with_text, lower_bound, upper_bound)
 
-        # Filter out overlapping boxes using Non-Maximum Suppression (NMS)
-        boxes = []
-        for (x, y) in coordinates:
+        extracted_text = pytesseract.image_to_string(region_with_text, config='--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789')
 
-            x2 = x + max(template.shape[1], 0)
-            y2 = y + max(template.shape[0], 0)
-            boxes.append([x, y, x2, y2])
-
-        #     cv2.rectangle(screen, (x, y), (x2, y2), (0, 255, 0), 2);
-        # cv2.imshow('Detected Wheat', screen)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-
-        # Apply Non-Maximum Suppression (NMS) to remove overlapping boxes
-        indices = cv2.dnn.NMSBoxes(boxes, [1] * len(boxes), score_threshold=threshold, nms_threshold=nms_threshold)
-
-        if len(indices) > 0:
-            for i in indices.flatten():
-                x1, y1, x2, y2 = boxes[i]
-
-                region_with_text = screen[y1:y1+20, x1-5:x1+40] # Petit decalage pour que le texte ne soit pas sur le bord
-                
-                # region_with_text = cv2.cvtColor(region_with_text, cv2.COLOR_BGR2GRAY)
-                # _, region_with_text = cv2.threshold(region_with_text, 180, 255, cv2.THRESH_BINARY)
-                
-                ## Remove color instead of gray might help for some items
-                lower_bound = np.array([150, 150, 150])
-                upper_bound = np.array([255, 255, 255])
-
-                # # Create a mask to keep only pixels in the range
-                region_with_text = cv2.inRange(region_with_text, lower_bound, upper_bound)
-
-                extracted_text = pytesseract.image_to_string(region_with_text, config='--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789')
-
-                # cv2.imshow('Detected Wheat', region_with_text)
-                # cv2.waitKey(0)
-                # cv2.destroyAllWindows()
-                # print("extracted_text:", extracted_text)
-                
-                if not extracted_text:
-                    print("no text found")
-                
-                else:
-                    match = re.search(r'\b[0-9]{1,4}\b', extracted_text)
-                    item_quantity += int(match.group(0))
-                    # print("extracted_text", extracted_text)
-                    # print("item_quantity", item_quantity)
+        cv2.imshow('Detected Wheat', region_with_text)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        print("extracted_text:", extracted_text)
+        
+        if not extracted_text:
+            print("no text found")
+        
+        else:
+            match = re.search(r'\b[0-9]{1,4}\b', extracted_text)
+            item_quantity += int(match.group(0))
+            # print("extracted_text", extracted_text)
+            # print("item_quantity", item_quantity)
         item_quantities[item_name] = item_quantity
 
-    # Close inventory
-    interception.press('i')
+        interception.click(x2_search_bar - 10, y_search_bar)
+
+    # Click a bit above the search bar (to unfocalise) then close inventory
+    interception.click(x_search_bar, y_search_bar-50)
+    open_close_inventory()
 
     return item_quantities
 
@@ -436,9 +457,6 @@ def move_to(x: int, y: int) -> str:
     """
 
     current_x, current_y = get_position()
-
-    from tools.pathfinding import a_star_map, show_map_with_path
-    from assets.dofus_map import dofus_map
 
     start = (current_x, current_y)
     goal = (x ,y)
