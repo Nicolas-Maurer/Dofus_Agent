@@ -1,8 +1,9 @@
 from assets.ressources import ressources
+from utils.helpers import normalize_input
 
 ## Need to find a way to give knowledge of the avaiable ressources to the model so it understand the user question
 # Add this to the prompt when necessary, like in a RAG manner?
-
+@normalize_input()
 def get_item_coordinates(item_name: str) -> dict:
     """
     Retrieve the coordinates of a specified resource item on the map.

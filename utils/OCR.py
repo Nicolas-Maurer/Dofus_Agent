@@ -13,6 +13,7 @@ from collections import defaultdict
 from utils.pathfinding import a_star_map
 from assets.grid import dofus_map
 import ctypes
+from utils.helpers import normalize_input
 
 # GLOBALS
 # I define window_name as a global because I don't want the llm to need to input it.
@@ -296,6 +297,7 @@ def click_on_coordinates(list_of_coordinates: List[Tuple[int, int]]) -> str:
 
 
 @focus_window
+@normalize_input(process_args=["item_name"])
 def collect_item(item_name: str, quantity: Optional[int]=None) -> str:
     """
     Collects all available instances of a specified item on the map or a specified quantity.
